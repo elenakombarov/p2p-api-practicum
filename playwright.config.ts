@@ -7,6 +7,7 @@ const baseURL = process.env.API_BASE_URL || 'http://localhost:8000';
 
 export default defineConfig({
   testDir: 'tests/api',
+  workers: 1,
   reporter: [['list'], ['html', { open: 'never' }]],
   use: {
     baseURL,
