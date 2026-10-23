@@ -1,0 +1,199 @@
+---
+description: How we test the P2P API — the docs are the oracle, black-box only, own data per test, positive/negative/error per endpoint, schema checks, one tag, evidence labels.
+globs: tests/**
+alwaysApply: false
+---
+
+# P2P API testing
+
+`docs/API.md` and `GET /openapi.json` are the oracle. `docs/QUESTIONS.md` holds anything they do not settle.
+
+## 1. Oracle
+
+**Rule:** Assert the documented requirement. If the API disagrees, keep the assertion, report the discrepancy, and do not weaken the test. Put undocumented behavior in `docs/QUESTIONS.md`. Do not assert an assumption until a human confirms it.
+
+**GOOD:** `vnd-002` is the inactive seed vendor. `docs/API.md` requires `inactive_vendor_gate`.
+
+```typescript
+const response = await request.post('/purchase-orders', {
+  data: {
+    vendor_id: 'vnd-002',
+    line_items: [{ sku: 'LUM-2X4-8', quantity: 1, unit_price: 4.75 }],
+  },
+});
+expect(response.status()).toBe(400);
+expect((await response.json()).rule).toBe('inactive_vendor_gate');
+```
+
+**BAD:** The call returned `validation_error`, so the test was changed to expect `validation_error`. A catalog price was also asserted as a required PO `unit_price`, which neither document requires.
+
+## 2. Black-box testing
+
+**Rule:** Design tests only from documented API behavior. Never read, inspect, or modify `src/`. Do not infer implementation details.
+
+**GOOD:** `POST /vendors` sends the documented fields `name` and optional `active`.
+
+```typescript
+const response = await request.post('/vendors', {
+  data: { name: 'Cedar Point Hardware', active: true },
+});
+expect(response.status()).toBe(201);
+expect((await response.json()).active).toBe(true);
+```
+
+**BAD:** `src/store.ts` was opened to copy the id algorithm, then the test required `POST /vendors` to return that internal format.
+
+## 3. Requests
+
+**Rule:** Call the API with Playwright's `request` fixture and a path relative to `baseURL`. The host comes from `API_BASE_URL`. Never hard-code `http://localhost:8000` in a test file.
+
+**GOOD:**
+
+```typescript
+const response = await request.get('/vendors');
+expect(response.status()).toBe(200);
+```
+
+**BAD:**
+
+```typescript
+const response = await request.get('http://localhost:8000/vendors');
+```
+
+## 4. Test data
+
+**Rule:** Each test creates the data it needs. Exposure tests create their own vendor. Invoice numbers are unique, such as `` `INV-${Date.now()}` ``. Do not call `POST /admin/reset` in a regular test, and do not use rows created by another test. The only exception is a serial flow designed inside one test group.
+
+**GOOD:**
+
+```typescript
+const created = await request.post('/vendors', { data: { name: `Vendor ${Date.now()}` } });
+const vendorId = (await created.json()).id;
+const exposure = await request.get(`/vendors/${vendorId}/exposure`);
+expect((await exposure.json()).vendor_id).toBe(vendorId);
+
+const invoiceNumber = `INV-${Date.now()}`;
+await request.post('/invoices', { data: { po_id: poId, invoice_number: invoiceNumber, line_items } });
+```
+
+**BAD:**
+
+```typescript
+await request.post('/admin/reset');
+const exposure = await request.get('/vendors/vnd-001/exposure');
+expect((await exposure.json()).approved_invoices).toContain('inv-from-another-test');
+```
+
+## 5. Endpoint coverage
+
+**Rule:** For each endpoint, cover a positive success, one invalid input at a time (HTTP 400 and the documented `rule`), and HTTP 404 for an unknown id where the docs list 404. Do not invent unsupported error scenarios.
+
+**GOOD:** `POST /purchase-orders` documents 201, 400, and 404. `GET /purchase-orders/{poId}` documents 404.
+
+```typescript
+const created = await request.post('/purchase-orders', {
+  data: { vendor_id: 'vnd-001', line_items: [{ sku: 'CEM-30KG', quantity: 1, unit_price: 11.9 }] },
+});
+expect(created.status()).toBe(201);
+
+const inactive = await request.post('/purchase-orders', {
+  data: { vendor_id: 'vnd-002', line_items: [{ sku: 'CEM-30KG', quantity: 1, unit_price: 11.9 }] },
+});
+expect(inactive.status()).toBe(400);
+expect((await inactive.json()).rule).toBe('inactive_vendor_gate');
+
+const missing = await request.get('/purchase-orders/po-does-not-exist');
+expect(missing.status()).toBe(404);
+```
+
+**BAD:** One `POST /purchase-orders` sends an inactive vendor and a quantity of `0` together, then expects HTTP 409. `GET /health` is also expected to return 404.
+
+## 6. Assertions
+
+**Rule:** Assert the HTTP status. On every HTTP 400, assert the exact documented `rule`; a 400 with the wrong `rule` fails the test. Assert meaningful values, not only that a property exists. When the P48 skill is available, validate the body with `expectSchema`.
+
+**GOOD:**
+
+```typescript
+expect(created.status()).toBe(201);
+const body = await created.json();
+expect(body.status).toBe('draft');
+expect(body.vendor_id).toBe('vnd-001');
+await expectSchema(body, 'PurchaseOrder'); // P48 helper, once that skill is available
+
+const firstSubmit = await request.post(`/purchase-orders/${body.id}/submit`);
+expect(firstSubmit.status()).toBe(200);
+const secondSubmit = await request.post(`/purchase-orders/${body.id}/submit`);
+expect(secondSubmit.status()).toBe(400);
+expect((await secondSubmit.json()).rule).toBe('workflow_gate');
+```
+
+**BAD:**
+
+```typescript
+expect(created.status()).toBe(201);
+expect(body).toHaveProperty('status');
+expect(secondSubmit.status()).toBe(400);
+```
+
+## 7. Tags
+
+**Rule:** Every test has exactly one tag on `test()`: `@api` for a single endpoint, `@e2e` for an end-to-end workflow. Use `{ tag: '@api' }`. Never tag `test.describe()`.
+
+**GOOD:**
+
+```typescript
+test('GET /skus', { tag: '@api' }, async ({ request }) => {
+  const response = await request.get('/skus');
+  expect(response.status()).toBe(200);
+});
+
+test('receive, invoice, match, and approve', { tag: '@e2e' }, async ({ request }) => {
+  await request.post(`/purchase-orders/${poId}/receive`, { data: { items: [{ sku: 'LUM-2X4-8', quantity: 1 }] } });
+  await request.post(`/invoices/${invoiceId}/match`);
+  await request.post(`/invoices/${invoiceId}/approve`);
+});
+```
+
+**BAD:**
+
+```typescript
+test.describe('invoices', { tag: '@api' }, () => {
+  test('match and approve', { tag: ['@api', '@e2e'] }, async ({ request }) => {
+    await request.post(`/invoices/${invoiceId}/approve`);
+  });
+});
+```
+
+## 8. Known bugs
+
+**Rule:** Keep a confirmed bug's test and its original assertions. Mark it with `test.fail(true, 'BUG-<n>: <one line>')`. Do not delete, skip, or weaken a test to hide a bug. Do not mark a bug confirmed without evidence.
+
+**GOOD:** Use this only after the failure is confirmed.
+
+```typescript
+test('duplicate invoice number is rejected', { tag: '@api' }, async ({ request }) => {
+  test.fail(true, 'BUG-2: duplicate invoice number returns 201');
+  const response = await request.post('/invoices', {
+    data: { po_id: poId, invoice_number: ' INV-7 ', line_items },
+  });
+  // Second submission. This vendor already has INV-7.
+  expect(response.status()).toBe(400);
+  expect((await response.json()).rule).toBe('duplicate_invoice_detection');
+});
+```
+
+**BAD:**
+
+```typescript
+test.skip(true, 'duplicate invoice numbers are flaky');
+expect(response.status()).toBe(201);
+```
+
+## 9. Evidence
+
+**Rule:** Label every claim `executed`, `inspected only`, or `not yet tested`. A planned or inspected-only check is not a successful run.
+
+**GOOD:** `executed`: `POST /invoices/{invoiceId}/match` returned HTTP 200 in this run. `inspected only`: `docs/API.md` says `GET /purchase-orders/{poId}` returns 404 for an unknown id; that call was not sent.
+
+**BAD:** `GET /purchase-orders/po-does-not-exist` returns 404, written as a result after reading `docs/API.md` and not sending the request.
