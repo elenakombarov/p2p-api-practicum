@@ -160,12 +160,13 @@ function main() {
   }
 
   const resolved = path.resolve(filePath);
-  if (!fs.existsSync(resolved)) {
+  const fileExists = fs.existsSync(resolved);
+  if (!fileExists && event !== 'preToolUse') {
     console.error(`guard-test-assertions: file not found — ${filePath}`);
     process.exit(1);
   }
 
-  const onDiskContent = fs.readFileSync(resolved, 'utf8');
+  const onDiskContent = fileExists ? fs.readFileSync(resolved, 'utf8') : '';
   let beforeCount;
   let afterCount;
 
