@@ -1,0 +1,462 @@
+{
+  "happy_path": {
+    "status": "PASS",
+    "steps": [
+      {
+        "step": 1,
+        "method": "GET",
+        "path": "/health",
+        "status": 200,
+        "verdict": "as-documented"
+      },
+      {
+        "step": 2,
+        "method": "GET",
+        "path": "/openapi.json",
+        "status": 200,
+        "verdict": "as-documented"
+      },
+      {
+        "step": 3,
+        "method": "GET",
+        "path": "/vendors",
+        "status": 200,
+        "verdict": "as-documented"
+      },
+      {
+        "step": 4,
+        "method": "GET",
+        "path": "/skus",
+        "status": 200,
+        "verdict": "as-documented"
+      },
+      {
+        "step": 5,
+        "method": "POST",
+        "path": "/vendors",
+        "status": 400,
+        "verdict": "as-documented"
+      },
+      {
+        "step": 6,
+        "method": "POST",
+        "path": "/vendors",
+        "status": 400,
+        "verdict": "as-documented"
+      },
+      {
+        "step": 7,
+        "method": "POST",
+        "path": "/vendors",
+        "status": 201,
+        "verdict": "as-documented"
+      },
+      {
+        "step": 8,
+        "method": "POST",
+        "path": "/purchase-orders",
+        "status": 201,
+        "verdict": "as-documented"
+      },
+      {
+        "step": 9,
+        "method": "POST",
+        "path": "/purchase-orders/po-776186ed/submit",
+        "status": 200,
+        "verdict": "as-documented"
+      },
+      {
+        "step": 10,
+        "method": "POST",
+        "path": "/purchase-orders/po-776186ed/receive",
+        "status": 200,
+        "verdict": "as-documented"
+      },
+      {
+        "step": 11,
+        "method": "POST",
+        "path": "/invoices",
+        "status": 201,
+        "verdict": "as-documented"
+      },
+      {
+        "step": 12,
+        "method": "POST",
+        "path": "/invoices/inv-f7860a56/match",
+        "status": 200,
+        "verdict": "as-documented"
+      },
+      {
+        "step": 13,
+        "method": "POST",
+        "path": "/invoices/inv-f7860a56/approve",
+        "status": 200,
+        "verdict": "as-documented"
+      },
+      {
+        "step": 14,
+        "method": "GET",
+        "path": "/vendors/vnd-7608b268/exposure",
+        "status": 200,
+        "verdict": "as-documented"
+      }
+    ]
+  },
+  "adversarial": [
+    {
+      "rule": "three_way_match_gate",
+      "status": "HELD",
+      "evidence": {
+        "request": {
+          "method": "POST",
+          "path": "/invoices/inv-fa3cc401/approve",
+          "body": null
+        },
+        "response": {
+          "status": 400,
+          "body": {
+            "detail": "Invoice inv-fa3cc401 must pass the 3-way match before approval.",
+            "rule": "three_way_match_gate"
+          }
+        },
+        "expected": "Business rules (three_way_match_gate) and Invoices: HTTP 400 with rule three_way_match_gate when approving an invoice that has not passed the 3-way match.",
+        "reason": "Approve on invoice inv-fa3cc401, which was created and never matched, returned 400 with rule three_way_match_gate."
+      }
+    },
+    {
+      "rule": "receive_quantity_limit",
+      "status": "HELD",
+      "evidence": {
+        "request": {
+          "method": "POST",
+          "path": "/purchase-orders/po-349980bc/receive",
+          "body": {
+            "items": [
+              {
+                "sku": "LUM-2X4-8",
+                "quantity": 12
+              }
+            ]
+          }
+        },
+        "response": {
+          "status": 400,
+          "body": {
+            "detail": "Cannot receive 12 of LUM-2X4-8: ordered 5, already received 0.",
+            "rule": "receive_quantity_limit"
+          }
+        },
+        "expected": "Business rules (receive_quantity_limit) and Purchase orders: HTTP 400 with rule receive_quantity_limit when the received quantity exceeds the ordered quantity.",
+        "reason": "Receiving 12 of LUM-2X4-8 on a line ordered for 5 returned 400 with rule receive_quantity_limit."
+      }
+    },
+    {
+      "rule": "overpayment_protection",
+      "status": "BREACHED",
+      "evidence": {
+        "request": {
+          "method": "POST",
+          "path": "/invoices",
+          "body": {
+            "po_id": "po-f67499ce",
+            "invoice_number": "INV-OVER-CENT",
+            "line_items": [
+              {
+                "sku": "LUM-2X4-8",
+                "quantity": 1,
+                "unit_price": 4.76
+              }
+            ]
+          }
+        },
+        "response": {
+          "status": 201,
+          "body": {
+            "id": "inv-f94194b5",
+            "po_id": "po-f67499ce",
+            "vendor_id": "vnd-c0504e09",
+            "invoice_number": "INV-OVER-CENT",
+            "status": "received",
+            "line_items": [
+              {
+                "sku": "LUM-2X4-8",
+                "quantity": 1,
+                "unit_price": 4.76
+              }
+            ],
+            "total_amount": 4.76,
+            "matched": false,
+            "partial_receipt": null
+          }
+        },
+        "expected": "Business rules (overpayment_protection) and Invoices: HTTP 400 with rule overpayment_protection when the invoice is one cent over the received value. There is no tolerance.",
+        "reason": "The purchase order line was quantity 1 at unit_price 4.75 and was fully received (received_value 4.75). The invoice for quantity 1 at 4.76 was created with HTTP 201 and total_amount 4.76, one cent over the received value."
+      }
+    },
+    {
+      "rule": "inactive_vendor_gate",
+      "status": "HELD",
+      "evidence": {
+        "request": {
+          "method": "POST",
+          "path": "/purchase-orders",
+          "body": {
+            "vendor_id": "vnd-cde84750",
+            "line_items": [
+              {
+                "sku": "LUM-2X4-8",
+                "quantity": 5,
+                "unit_price": 4.75
+              }
+            ]
+          }
+        },
+        "response": {
+          "status": 400,
+          "body": {
+            "detail": "Vendor vnd-cde84750 is inactive. Purchase orders need an active vendor.",
+            "rule": "inactive_vendor_gate"
+          }
+        },
+        "expected": "Business rules (inactive_vendor_gate) and Purchase orders: HTTP 400 with rule inactive_vendor_gate when creating a purchase order for an inactive vendor.",
+        "reason": "A purchase order for vendor vnd-cde84750, created in this attack with active false, returned 400 with rule inactive_vendor_gate."
+      }
+    },
+    {
+      "rule": "validation_error",
+      "status": "HELD",
+      "evidence": {
+        "request": {
+          "method": "POST",
+          "path": "/purchase-orders",
+          "body": {
+            "vendor_id": "vnd-ed0fa55c",
+            "line_items": [
+              {
+                "sku": "LUM-2X4-8",
+                "quantity": 0,
+                "unit_price": 4.75
+              }
+            ]
+          }
+        },
+        "response": {
+          "status": 400,
+          "body": {
+            "detail": "line_items.0.quantity: quantity must be greater than 0",
+            "rule": "validation_error"
+          }
+        },
+        "expected": "Purchase orders and Errors: quantity must be greater than 0, so HTTP 400 with rule validation_error.",
+        "reason": "A purchase order line with quantity 0 returned 400 with rule validation_error."
+      }
+    },
+    {
+      "rule": "duplicate_invoice_detection",
+      "status": "BREACHED",
+      "evidence": {
+        "request": {
+          "method": "POST",
+          "path": "/invoices",
+          "body": {
+            "po_id": "po-ddc1e64d",
+            "invoice_number": "inv-7",
+            "line_items": [
+              {
+                "sku": "LUM-2X4-8",
+                "quantity": 1,
+                "unit_price": 4.75
+              }
+            ]
+          }
+        },
+        "response": {
+          "status": 201,
+          "body": {
+            "id": "inv-2a031282",
+            "po_id": "po-ddc1e64d",
+            "vendor_id": "vnd-129c3526",
+            "invoice_number": "inv-7",
+            "status": "received",
+            "line_items": [
+              {
+                "sku": "LUM-2X4-8",
+                "quantity": 1,
+                "unit_price": 4.75
+              }
+            ],
+            "total_amount": 4.75,
+            "matched": false,
+            "partial_receipt": null
+          }
+        },
+        "expected": "Business rules (duplicate_invoice_detection): HTTP 400 with rule duplicate_invoice_detection. INV-7 and inv-7 are the same invoice number.",
+        "reason": "On one vendor, invoice number INV-7 was accepted (201) and inv-7 was then also accepted (201). The documented comparison ignores case, so the second invoice should have been rejected. A second breach on this rule: INV-7 was accepted and the same number with a leading and trailing space was also accepted (201) and stored as ' INV-7 ', which the documented comparison treats as the same number."
+      }
+    },
+    {
+      "rule": "partial_receipt_flag",
+      "status": "BREACHED",
+      "evidence": {
+        "request": {
+          "method": "POST",
+          "path": "/invoices/inv-3c9dfab0/match",
+          "body": null
+        },
+        "response": {
+          "status": 200,
+          "body": {
+            "invoice_id": "inv-3c9dfab0",
+            "po_id": "po-93995bf0",
+            "status": "matched",
+            "matched": true,
+            "partial_receipt": false,
+            "ordered_value": 243,
+            "received_value": 86.2,
+            "invoice_total": 86.2,
+            "message": "3-way match passed."
+          }
+        },
+        "expected": "Business rules (partial_receipt_flag) and Invoices: the match result sets partial_receipt to true when any purchase-order line is not fully received, including a shortfall on the last line.",
+        "reason": "LUM-2X4-8 was received 4 of 4 and PLY-12-4X8 was received 3 of 10, so fully_received is false. The match returned 200 with partial_receipt false, received_value 86.2 and ordered_value 243. The flag should be true."
+      }
+    },
+    {
+      "rule": "gl_balance",
+      "status": "HELD",
+      "evidence": {
+        "request": {
+          "method": "POST",
+          "path": "/invoices/inv-498c7bc9/approve",
+          "body": null
+        },
+        "response": {
+          "status": 200,
+          "body": {
+            "invoice_id": "inv-498c7bc9",
+            "status": "approved",
+            "gl_entry": {
+              "debits": [
+                {
+                  "account": "5000 Materials Expense",
+                  "amount": 0.3
+                }
+              ],
+              "credits": [
+                {
+                  "account": "2000 Accounts Payable",
+                  "amount": 0.3
+                }
+              ],
+              "balanced": true
+            },
+            "vendor_exposure": 0.3
+          }
+        },
+        "expected": "Business rules (gl_balance) and Invoices: approval posts a balanced ledger entry where total debits equal total credits.",
+        "reason": "Approval of lines priced 0.1 and 0.2 returned 200. The ledger debit is 0.3, the credit is 0.3, balanced is true, and that matches invoice total_amount 0.3."
+      }
+    },
+    {
+      "rule": "workflow_gate",
+      "status": "HELD",
+      "evidence": {
+        "request": {
+          "method": "POST",
+          "path": "/purchase-orders/po-ce6b1306/receive",
+          "body": {
+            "items": [
+              {
+                "sku": "LUM-2X4-8",
+                "quantity": 5
+              }
+            ]
+          }
+        },
+        "response": {
+          "status": 400,
+          "body": {
+            "detail": "Goods can only be received on a submitted purchase order. po-ce6b1306 is draft.",
+            "rule": "workflow_gate"
+          }
+        },
+        "expected": "Business rules (workflow_gate) and Purchase orders: receive only on a submitted purchase order, so HTTP 400 with rule workflow_gate.",
+        "reason": "Receiving against a draft purchase order returned 400 with rule workflow_gate."
+      }
+    },
+    {
+      "rule": "duplicate_approval",
+      "status": "HELD",
+      "evidence": {
+        "request": {
+          "method": "POST",
+          "path": "/invoices/inv-31fa44c0/approve",
+          "body": null
+        },
+        "response": {
+          "status": 400,
+          "body": {
+            "detail": "Invoice inv-31fa44c0 is already approved.",
+            "rule": "duplicate_approval"
+          }
+        },
+        "expected": "Business rules (duplicate_approval) and Invoices: an invoice can be approved only once, so HTTP 400 with rule duplicate_approval.",
+        "reason": "The second approve on an already approved invoice returned 400 with rule duplicate_approval."
+      }
+    },
+    {
+      "rule": "invoice_line_validation",
+      "status": "HELD",
+      "evidence": {
+        "request": {
+          "method": "POST",
+          "path": "/invoices",
+          "body": {
+            "po_id": "po-bf60440e",
+            "invoice_number": "INV-SKU-OFF",
+            "line_items": [
+              {
+                "sku": "PLY-12-4X8",
+                "quantity": 1,
+                "unit_price": 22.4
+              }
+            ]
+          }
+        },
+        "response": {
+          "status": 400,
+          "body": {
+            "detail": "SKU PLY-12-4X8 is not on the purchase order.",
+            "rule": "invoice_line_validation"
+          }
+        },
+        "expected": "Business rules (invoice_line_validation) and Invoices: every invoice line is for a SKU on the purchase order, so HTTP 400 with rule invoice_line_validation.",
+        "reason": "An invoice for PLY-12-4X8 against a purchase order that contains only LUM-2X4-8 returned 400 with rule invoice_line_validation."
+      }
+    },
+    {
+      "rule": "vendor_exposure_math",
+      "status": "HELD",
+      "evidence": {
+        "request": {
+          "method": "GET",
+          "path": "/vendors/vnd-3f6214b2/exposure",
+          "body": null
+        },
+        "response": {
+          "status": 200,
+          "body": {
+            "vendor_id": "vnd-3f6214b2",
+            "open_ap_liability": 9.5,
+            "approved_invoices": [
+              "inv-6168f2e3"
+            ]
+          }
+        },
+        "expected": "Business rules (vendor_exposure_math) and Vendors: a vendor's exposure equals the sum of total_amount over that vendor's approved invoices.",
+        "reason": "The vendor had one approved invoice with total_amount 9.5. GET exposure returned open_ap_liability 9.5 for that invoice, and the approval returned vendor_exposure 9.5."
+      }
+    }
+  ],
+  "summary": "Nine of the twelve tested rules held. Three broke, and each break was confirmed on a new vendor and a new order. overpayment_protection accepted an invoice of 4.76 after goods worth 4.75 were received, so 0.01 was billed with no tolerance allowed. duplicate_invoice_detection accepted a second invoice of 4.75 when the number differed only by case, and another second invoice of 4.75 when the number differed only by surrounding spaces. partial_receipt_flag returned false while the last line was short, so a receipt of 86.20 against an order of 243.00 was treated as complete and 156.80 still outstanding was not flagged. No attack was undocumented."
+}
