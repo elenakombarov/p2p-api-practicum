@@ -195,6 +195,7 @@ test.describe('partial receipt flow', () => {
   });
 
   test('matches the invoice with partial_receipt true', e2e, async ({ request }) => {
+    test.fail(true, 'BUG-3: partial_receipt stays false when a later line is short');
     const response = await request.post(`/invoices/${requireId(invoiceId, 'invoice')}/match`);
     expect(response.status()).toBe(200);
     const body: unknown = await response.json();

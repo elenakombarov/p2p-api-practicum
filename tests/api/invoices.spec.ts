@@ -636,6 +636,7 @@ test.describe('invoices', () => {
   });
 
   test('INV-33 rejects invoice numbers that match ignoring case and surrounding spaces', apiTag, async ({ request }) => {
+    test.fail(true, 'BUG-2: a case-only invoice number is accepted');
     const firstPoId = await readyOneLine(request);
     const secondPoId = await readyOneLine(request);
     const thirdPoId = await readyOneLine(request);
@@ -649,6 +650,17 @@ test.describe('invoices', () => {
 
     const thirdResponse = await postInvoice(request, invoiceBody(thirdPoId, ' INV-7 ', [curlLine]));
     await expectErrorRule(request, thirdResponse, 400, 'duplicate_invoice_detection');
+  });
+
+  test('rejects an invoice one cent over the received value', apiTag, async ({ request }) => {
+    test.fail(true, 'BUG-1: an invoice one cent over the received value returns 201');
+    const vendorId = await createVendor(request, `Over Cent ${Date.now()}`);
+    const poId = await readyPurchaseOrder(request, oneLinePo(1, 4.75, vendorId), lumberReceipt(1));
+    const response = await postInvoice(
+      request,
+      invoiceBody(poId, `INV-CENT-${Date.now()}`, [{ sku: 'LUM-2X4-8', quantity: 1, unit_price: 4.76 }]),
+    );
+    await expectErrorRule(request, response, 400, 'overpayment_protection');
   });
 
   test('INVGET-01 reads a received invoice', apiTag, async ({ request }) => {
@@ -798,6 +810,7 @@ test.describe('invoices', () => {
   });
 
   test('MATCH-04 matches when another ordered line was not received', apiTag, async ({ request }) => {
+    test.fail(true, 'BUG-3: partial_receipt stays false when another ordered line was not received');
     const poId = await submittedWorkedExample(request);
     await receivePurchaseOrder(request, poId, curlReceipt);
     const createdResponse = await postInvoice(request, invoiceBody(poId, 'INV-MATCH-PART2', [curlLine]));
